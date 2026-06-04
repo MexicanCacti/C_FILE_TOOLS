@@ -1,29 +1,25 @@
-#include <stdio.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <errno.h>
-#include <string.h>
-#include <fcntl.h>
 #include <unistd.h>
-#include <ctype.h>
+#include <fcntl.h>
+#include <string.h>
 
-size_t fileListCapacity = 1024;
 size_t readBufferCapacity = 1024;
+size_t fileListCapacity = 1024;
 int returnStatus = 0;
-
-size_t totalNewline = 0;
-size_t totalWords = 0;
-size_t totalBytes = 0;
+size_t bytesPerLine = 8;
 
 void getFileList(char** fileList, size_t* fileListLength, int* argc, char*** argv);
 void outputError(char* errorInfo);
-/*
-    wc should print newline, word, and byte counts for each file. Also a total line if more than 1 file is specified
-    if no files specified, read standard input
-*/
+
+// hexdump - display file contents in hexadecimal, decimal, octal, or ascii
+// For the purposes of this project, file contents will be displayed only in hexadecimal
+// Each hex digit represents 4 bits, each bytes is 8 bits
 int main(int argc, char** argv)
 {
-    size_t fileListLength = 0;
     char* fileList = malloc(fileListCapacity);
+    size_t fileListLength = 0;
     char* readBuffer = malloc(readBufferCapacity);
 
     if(fileList == NULL)
@@ -34,8 +30,21 @@ int main(int argc, char** argv)
         return returnStatus;
     }
 
+    if(readBuffer == NULL)
+    {
+        returnStatus = errno;
+        outputError("Error allocating readBuffer array");
+        free(fileList);
+        free(readBuffer);
+        return returnStatus;
+    }
+
     getFileList(&fileList, &fileListLength, &argc, &argv);
-    if(returnStatus != 0) return returnStatus;
+    if(returnStatus != 0){
+        free(fileList);
+        free(readBuffer);
+        return returnStatus;
+    }
 
     int rd = 0;
 
@@ -44,51 +53,13 @@ int main(int argc, char** argv)
     // Note ssize_t only used when negative vals possible, otherwise size_t
     ssize_t readBytes = 0;  
 
-    // No files passed in, take from stdin
-    if(fileListLength == 0)
-    {
-        char lastChar = ' ';
-        do
-        {
-            readBytes = read(rd, readBuffer, readBufferCapacity);
-            if(readBytes < 0)
-            {
-                returnStatus = errno;
-                outputError("Error from reading stdin");
-                break;
-            }
 
-            totalBytes += readBytes;
-
-            for(size_t b = 0; b < readBytes; ++b)
-            {
-                if(isspace(readBuffer[b]) && isalnum(lastChar)) ++totalWords;
-
-                // \n indicates a new line,
-                if(readBuffer[b] == '\n') ++totalNewline;
-                    
-                lastChar = readBuffer[b];
-            }
-        } while (readBytes != 0);
-
-        if(isalnum(lastChar)) ++totalWords;
-
-        if(returnStatus == 0)
-        {
-            printf("%zu\t%zu\t%zu\n", totalNewline, totalWords, totalBytes);
-        }
-        
-    }
-    else
+    if(fileListLength > 0)
     {
         size_t index = 0;
         
         while(index < fileListLength)
         {
-            size_t fileNewlineCount = 0;
-            size_t fileWordCount = 0;
-            size_t fileByteCount = 0;
-
             char* fileName = &fileList[index];
             index += strlen(fileName) + 1;
             rd = open(fileName, O_RDONLY);
@@ -99,9 +70,12 @@ int main(int argc, char** argv)
                 continue;
             }
 
-            char lastChar = ' '; 
-            do{
+            printf("%s", fileName);
+            unsigned int bytesRead = 0;
+            do
+            {
                 readBytes = read(rd, readBuffer, readBufferCapacity);
+
                 if(readBytes < 0)
                 {
                     returnStatus = errno;
@@ -109,21 +83,21 @@ int main(int argc, char** argv)
                     break;
                 }
 
-                fileByteCount += readBytes;
-                
-                // Now in a loop process what has been read
-                for(size_t b = 0 ; b < readBytes; ++b)
+                for(size_t b = 0; b < readBytes; ++b)
                 {
-                    if(isspace(readBuffer[b]) && isalnum(lastChar)) ++fileWordCount;
+                    if(bytesRead % bytesPerLine == 0)
+                    {
+                        printf("\n%x\t", bytesRead);
+                    }
+                    ++bytesRead;
+                    unsigned char byte = readBuffer[b];
+                    unsigned char upper = byte >> 4;
+                    unsigned char lower = byte & 0x0F;
 
-                    // \n indicates a new line,
-                    if(readBuffer[b] == '\n') ++fileNewlineCount;
+                    printf("%X%X ", upper, lower);
                     
-                    lastChar = readBuffer[b];
                 }
-
-            } while(readBytes != 0);
-            if(isalnum(lastChar)) ++fileWordCount;
+            } while (readBytes != 0);
 
             errorCheck = close(rd);
             if(errorCheck < 0)
@@ -133,16 +107,8 @@ int main(int argc, char** argv)
                 break;
             }
 
-            if(returnStatus == 0)
-            {
-                printf("%zu\t%zu\t%zu\t%s\n", fileNewlineCount, fileWordCount, fileByteCount, fileName);
-                totalNewline += fileNewlineCount;
-                totalWords += fileWordCount;
-                totalBytes += fileByteCount;
-            }
+            printf("\n");
         }
-
-        printf("%zu\t%zu\t%zu\t%s\n", totalNewline, totalWords, totalBytes, "total");
 
     }
 
@@ -151,8 +117,8 @@ int main(int argc, char** argv)
     free(readBuffer);
 
     return returnStatus;
-}
 
+}
 
 void getFileList(char** fileList, size_t* fileListLength, int* argc, char*** argv)
 {
